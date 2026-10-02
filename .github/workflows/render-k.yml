@@ -39,11 +39,14 @@ jobs:
         run: |
           set -e
           mkdir -p /tmp/src && cd /tmp/src
-          for i in $(seq 1 10 321); do
+          for i in $(seq 1 10 311); do
             s=$(printf '%03d' $i); e=$(printf '%03d' $((i+9)))
             curl -sSfL -o "v_${s}.pdf" \
               "https://raw.githubusercontent.com/aokid666/zz-pdf/main/pdf/%E7%9F%A5%E8%AF%86%E6%B8%85%E5%8D%95-P${s}-${e}.pdf"
           done
+          # 末卷页数不整（P321-326）
+          curl -sSfL -o v_321.pdf \
+            "https://raw.githubusercontent.com/aokid666/zz-pdf/main/pdf/%E7%9F%A5%E8%AF%86%E6%B8%85%E5%8D%95-P321-326.pdf"
           ls -1 | wc -l
           pdfunite v_*.pdf /tmp/full.pdf
           pdfinfo /tmp/full.pdf | grep -E '^Pages|^Page size'
