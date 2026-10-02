@@ -1,0 +1,97 @@
+name: 渲染知识清单截图（原格式 JPEG）
+
+# 从 zz-pdf 的 33 个《知识清单》分卷重新渲染成 326 页 JPEG 原格式截图（不转 WebP）。
+# 全程在 GitHub 服务器上跑，手机零流量。
+
+on:
+  workflow_dispatch:
+    inputs:
+      dpi:
+        description: '渲染 DPI（原扫描件 306dpi）'
+        required: false
+        default: '300'
+      quality:
+        description: 'JPEG 质量'
+        required: false
+        default: '95'
+      dest:
+        description: '输出目录'
+        required: false
+        default: 'img/k'
+
+concurrency:
+  group: render-k
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装工具
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+
+      - name: 下载并合并《知识清单》分卷
+        run: |
+          set -e
+          mkdir -p /tmp/src && cd /tmp/src
+          for i in $(seq 1 10 321); do
+            s=$(printf '%03d' $i); e=$(printf '%03d' $((i+9)))
+            curl -sSfL -o "v_${s}.pdf" \
+              "https://raw.githubusercontent.com/aokid666/zz-pdf/main/pdf/%E7%9F%A5%E8%AF%86%E6%B8%85%E5%8D%95-P${s}-${e}.pdf"
+          done
+          ls -1 | wc -l
+          pdfunite v_*.pdf /tmp/full.pdf
+          pdfinfo /tmp/full.pdf | grep -E '^Pages|^Page size'
+
+      - name: 渲染页面（4 路并行）
+        run: |
+          set -e
+          mkdir -p /tmp/pg
+          n=$(pdfinfo /tmp/full.pdf | awk '/^Pages/{print $2}')
+          step=$(( (n + 3) / 4 ))
+          for k in 0 1 2 3; do
+            f=$(( k * step + 1 )); l=$(( (k + 1) * step ))
+            [ $l -gt $n ] && l=$n
+            [ $f -gt $n ] && continue
+            pdftoppm -jpeg -r ${{ inputs.dpi }} -jpegopt quality=95 \
+                     -f $f -l $l /tmp/full.pdf /tmp/pg/p &
+          done
+          wait
+          echo "渲染完成：$(ls /tmp/pg | wc -l) 页，$(du -sh /tmp/pg | cut -f1)"
+
+      - name: 重命名为 4 位序号
+        run: |
+          set -e
+          mkdir -p "${{ inputs.dest }}"
+          i=0
+          for f in $(ls /tmp/pg/p-*.jpg | sort -V); do
+            i=$((i + 1))
+            n=$(printf '%04d' $i)
+            cp "$f" "${{ inputs.dest }}/$n.jpg"
+          done
+          echo "共 $i 页"
+          du -sh "${{ inputs.dest }}"
+
+      - name: 分批提交推送
+        run: |
+          set -e
+          git config user.name  github-actions
+          git config user.email actions@github.com
+          ls "${{ inputs.dest }}"/*.jpg > /tmp/list.txt
+          echo "共 $(wc -l < /tmp/list.txt) 张"
+          split -l 80 /tmp/list.txt /tmp/chunk_
+          b=0
+          for c in /tmp/chunk_*; do
+            b=$((b + 1))
+            xargs -a "$c" git add
+            if git diff --cached --quiet; then continue; fi
+            git commit -q -m "知识清单 JPEG 第 $b 批"
+            git push -q
+            echo "  第 $b 批已推送"
+          done
+          echo "全部完成"
